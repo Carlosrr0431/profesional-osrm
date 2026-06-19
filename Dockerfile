@@ -12,7 +12,7 @@ ENV MAP_NAME=salta
 ENV PORT=5000
 ENV SALTA_EXTRACT=true
 ENV SALTA_BBOX=-68.75,-26.62,-62.00,-21.78
-ENV PBF_SOURCE_URL=https://download.geofabrik.de/south-america/argentina-latest.osm.pbf
+ENV PBF_SOURCE_URL=https://download3.bbbike.org/osm/pbf/region/south-america/argentina.osm.pbf
 
 EXPOSE 5000
 
