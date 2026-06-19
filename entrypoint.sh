@@ -13,7 +13,7 @@ USER_AGENT="${USER_AGENT:-ProfesionalApp-OSRM/1.0}"
 mkdir -p "${DATA_DIR}"
 
 log() {
-  echo "[osrm $(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"
+  echo "[osrm $(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >&2
 }
 
 osrm_ready() {
