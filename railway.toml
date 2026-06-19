@@ -6,4 +6,4 @@ dockerfilePath = "Dockerfile"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 healthcheckPath = "/route/v1/driving/-65.42,-24.78;-65.41,-24.79?overview=false"
-healthcheckTimeout = 600
+healthcheckTimeout = 2400
