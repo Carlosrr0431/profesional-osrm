@@ -8,7 +8,7 @@ restartPolicyMaxRetries = 10
 healthcheckPath = "/route/v1/driving/-65.42,-24.78;-65.41,-24.79?overview=false"
 healthcheckTimeout = 2400
 
-# Runtime Salta: ~512–1024 MB. Subir a 2147483648 solo con FORCE_REBUILD=true.
+# osmium extract + osrm-extract necesitan ~1.5–2 GB pico con PBF Argentina.
 [deploy.limitOverride.containers]
-memoryBytes = 1073741824
+memoryBytes = 2147483648
 cpu = 1

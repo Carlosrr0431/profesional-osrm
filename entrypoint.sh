@@ -42,6 +42,8 @@ region_bbox() {
 MAP_NAME="${MAP_NAME:-$(region_map_name)}"
 PBF_FILE="$(region_pbf_file)"
 OSRM_BASE="${DATA_DIR}/${MAP_NAME}.osrm"
+REBUILD_MARKER="${DATA_DIR}/.force-rebuild-applied"
+REEXTRACT_MARKER="${DATA_DIR}/.force-reextract-applied"
 
 osrm_ready() {
   [ -f "${OSRM_BASE}" ] \
@@ -89,6 +91,7 @@ prepare_pbf() {
   if [ -n "${PBF_URL:-}" ]; then
     log "Descargando PBF desde ${PBF_URL}..."
     curl -fsSL -A "${USER_AGENT}" --connect-timeout 60 --max-time 7200 -o "${PBF_FILE}" "${PBF_URL}"
+    touch "${REEXTRACT_MARKER}"
     return
   fi
 
@@ -97,6 +100,7 @@ prepare_pbf() {
     argentina="$(resolve_argentina_pbf)"
     log "Usando Argentina completa: ${argentina}"
     cp -f "${argentina}" "${PBF_FILE}"
+    touch "${REEXTRACT_MARKER}"
     return
   fi
 
@@ -105,6 +109,7 @@ prepare_pbf() {
   bbox="$(region_bbox)"
   log "Extrayendo ${IMPORT_REGION} (bbox ${bbox}) desde ${argentina}..."
   osmium extract -b "${bbox}" "${argentina}" -o "${PBF_FILE}" --overwrite
+  touch "${REEXTRACT_MARKER}"
   if [ "${KEEP_ARGENTINA_PBF:-false}" != "true" ]; then
     rm -f "${argentina}" "${DATA_DIR}/argentina-latest.osm.pbf" "${DATA_DIR}/argentina.osm.pbf"
     log "PBF de Argentina eliminado del volumen (KEEP_ARGENTINA_PBF=false)."
@@ -112,14 +117,24 @@ prepare_pbf() {
 }
 
 if [ "${FORCE_REBUILD:-false}" = "true" ]; then
-  log "FORCE_REBUILD: eliminando grafo existente..."
-  rm -f "${DATA_DIR}/${MAP_NAME}.osrm"*
-  log "Asegurate de healthcheck timeout >= 2400 s mientras reconstruye el grafo."
+  if [ -f "${REBUILD_MARKER}" ] && osrm_ready; then
+    log "FORCE_REBUILD ya aplicado (grafo listo). Desactivá FORCE_REBUILD en Railway."
+  else
+    log "FORCE_REBUILD: eliminando grafo existente (una sola vez)..."
+    rm -f "${DATA_DIR}/${MAP_NAME}.osrm"*
+    rm -f "${REBUILD_MARKER}"
+    log "Asegurate de healthcheck timeout >= 2400 s mientras reconstruye el grafo."
+  fi
 fi
 
 if [ "${FORCE_REEXTRACT:-false}" = "true" ]; then
-  log "FORCE_REEXTRACT: eliminando PBF en caché..."
-  rm -f "${PBF_FILE}" "${DATA_DIR}/argentina-latest.osm.pbf" "${DATA_DIR}/argentina.osm.pbf"
+  if [ -f "${REEXTRACT_MARKER}" ] && [ -f "${PBF_FILE}" ]; then
+    log "FORCE_REEXTRACT ya aplicado (${PBF_FILE} existe). Desactivá FORCE_REEXTRACT en Railway."
+  else
+    log "FORCE_REEXTRACT: eliminando PBF en caché (una sola vez)..."
+    rm -f "${PBF_FILE}" "${DATA_DIR}/argentina-latest.osm.pbf" "${DATA_DIR}/argentina.osm.pbf"
+    rm -f "${REEXTRACT_MARKER}"
+  fi
 fi
 
 if ! osrm_ready; then
@@ -143,16 +158,19 @@ if ! osrm_ready; then
     exit 1
   fi
 
+  touch "${REBUILD_MARKER}"
+
   if [ "${KEEP_PBF:-false}" != "true" ]; then
     rm -f "${PBF_FILE}"
     log "PBF eliminado tras construir grafo (KEEP_PBF=false)."
   fi
 
   if [ "${FORCE_REBUILD:-false}" = "true" ]; then
-    log "Grafo reconstruido. Poné FORCE_REBUILD=false en Railway y redeploy."
+    log "Grafo reconstruido. Poné FORCE_REBUILD=false en Railway."
   fi
 else
   log "Grafo existente en ${DATA_DIR}, omitiendo procesamiento."
+  touch "${REBUILD_MARKER}" 2>/dev/null || true
 fi
 
 log "Servidor listo en puerto ${PORT} (region=${IMPORT_REGION}, threads=${OSRM_THREADS})"
