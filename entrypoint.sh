@@ -2,19 +2,46 @@
 set -euo pipefail
 
 DATA_DIR="${DATA_DIR:-/data}"
-MAP_NAME="${MAP_NAME:-salta}"
-PBF_FILE="${DATA_DIR}/${MAP_NAME}.osm.pbf"
-OSRM_BASE="${DATA_DIR}/${MAP_NAME}.osrm"
+IMPORT_REGION="${IMPORT_REGION:-salta}"
 PORT="${PORT:-5000}"
 PBF_SOURCE_URL="${PBF_SOURCE_URL:-https://download3.bbbike.org/osm/pbf/region/south-america/argentina.osm.pbf}"
 SALTA_BBOX="${SALTA_BBOX:--68.75,-26.62,-62.00,-21.78}"
+CAPITAL_BBOX="${CAPITAL_BBOX:--65.55,-24.90,-65.30,-24.70}"
 USER_AGENT="${USER_AGENT:-ProfesionalApp-OSRM/1.0}"
+OSRM_THREADS="${OSRM_THREADS:-1}"
 
 mkdir -p "${DATA_DIR}"
 
 log() {
   echo "[osrm $(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >&2
 }
+
+region_map_name() {
+  case "${IMPORT_REGION}" in
+    capital) echo "salta-capital" ;;
+    argentina) echo "argentina" ;;
+    *) echo "salta" ;;
+  esac
+}
+
+region_pbf_file() {
+  case "${IMPORT_REGION}" in
+    capital) echo "${DATA_DIR}/salta-capital.osm.pbf" ;;
+    argentina) echo "${DATA_DIR}/argentina.osm.pbf" ;;
+    *) echo "${DATA_DIR}/salta.osm.pbf" ;;
+  esac
+}
+
+region_bbox() {
+  case "${IMPORT_REGION}" in
+    capital) echo "${CAPITAL_BBOX}" ;;
+    *) echo "${SALTA_BBOX}" ;;
+  esac
+}
+
+MAP_NAME="${MAP_NAME:-$(region_map_name)}"
+PBF_FILE="$(region_pbf_file)"
+OSRM_BASE="${DATA_DIR}/${MAP_NAME}.osrm"
 
 osrm_ready() {
   [ -f "${OSRM_BASE}" ] \
@@ -65,7 +92,7 @@ prepare_pbf() {
     return
   fi
 
-  if [ "${IMPORT_REGION:-salta}" = "argentina" ] || [ "${SALTA_EXTRACT:-true}" = "false" ]; then
+  if [ "${IMPORT_REGION}" = "argentina" ] || [ "${SALTA_EXTRACT:-true}" = "false" ]; then
     local argentina
     argentina="$(resolve_argentina_pbf)"
     log "Usando Argentina completa: ${argentina}"
@@ -73,12 +100,14 @@ prepare_pbf() {
     return
   fi
 
-  local argentina
+  local argentina bbox
   argentina="$(resolve_argentina_pbf)"
-  log "Extrayendo provincia de Salta (bbox ${SALTA_BBOX}) desde ${argentina}..."
-  osmium extract -b "${SALTA_BBOX}" "${argentina}" -o "${PBF_FILE}" --overwrite
-  if [ "${KEEP_ARGENTINA_PBF:-true}" != "true" ]; then
-    rm -f "${argentina}"
+  bbox="$(region_bbox)"
+  log "Extrayendo ${IMPORT_REGION} (bbox ${bbox}) desde ${argentina}..."
+  osmium extract -b "${bbox}" "${argentina}" -o "${PBF_FILE}" --overwrite
+  if [ "${KEEP_ARGENTINA_PBF:-false}" != "true" ]; then
+    rm -f "${argentina}" "${DATA_DIR}/argentina-latest.osm.pbf" "${DATA_DIR}/argentina.osm.pbf"
+    log "PBF de Argentina eliminado del volumen (KEEP_ARGENTINA_PBF=false)."
   fi
 }
 
@@ -116,6 +145,7 @@ if ! osrm_ready; then
 
   if [ "${KEEP_PBF:-false}" != "true" ]; then
     rm -f "${PBF_FILE}"
+    log "PBF eliminado tras construir grafo (KEEP_PBF=false)."
   fi
 
   if [ "${FORCE_REBUILD:-false}" = "true" ]; then
@@ -125,5 +155,5 @@ else
   log "Grafo existente en ${DATA_DIR}, omitiendo procesamiento."
 fi
 
-log "Servidor listo en puerto ${PORT}"
-exec osrm-routed --algorithm mld --port "${PORT}" "${OSRM_BASE}"
+log "Servidor listo en puerto ${PORT} (region=${IMPORT_REGION}, threads=${OSRM_THREADS})"
+exec osrm-routed --algorithm mld --port "${PORT}" --threads "${OSRM_THREADS}" "${OSRM_BASE}"
