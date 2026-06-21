@@ -51,6 +51,41 @@ osrm_ready() {
     || [ -f "${OSRM_BASE}.cells" ]
 }
 
+pbf_is_valid() {
+  local file="$1"
+  local size
+
+  [ -f "${file}" ] || return 1
+  size="$(wc -c < "${file}" | tr -d ' ')"
+  # Un PBF de Salta válido tiene al menos ~1 MB; archivos truncados suelen ser HTML de error o 0 bytes.
+  [ "${size}" -gt 1000000 ] || return 1
+  osmium fileinfo "${file}" >/dev/null 2>&1
+}
+
+invalidate_pbf_cache() {
+  local file="$1"
+  if [ -f "${file}" ] && ! pbf_is_valid "${file}"; then
+    log "PBF inválido o corrupto, eliminando: ${file} ($(wc -c < "${file}" | tr -d ' ') bytes)"
+    rm -f "${file}"
+    rm -f "${REEXTRACT_MARKER}"
+    return 0
+  fi
+  return 1
+}
+
+purge_pbf_cache() {
+  log "Limpiando caché PBF en ${DATA_DIR}..."
+  rm -f "${PBF_FILE}" \
+    "${DATA_DIR}/salta.osm.pbf" \
+    "${DATA_DIR}/salta-capital.osm.pbf" \
+    "${DATA_DIR}/argentina.osm.pbf" \
+    "${DATA_DIR}/argentina-latest.osm.pbf" \
+    "${DATA_DIR}/argentina-260618.osm.pbf" \
+    "${DATA_DIR}"/*.osm.pbf.part \
+    "${DATA_DIR}"/*.osm.pbf.part.*
+  rm -f "${REEXTRACT_MARKER}"
+}
+
 resolve_argentina_pbf() {
   if [ -n "${PBF_SOURCE_PATH:-}" ] && [ -f "${PBF_SOURCE_PATH}" ]; then
     echo "${PBF_SOURCE_PATH}"
@@ -62,8 +97,12 @@ resolve_argentina_pbf() {
     "${DATA_DIR}/argentina-latest.osm.pbf" \
     "${DATA_DIR}/argentina.osm.pbf"; do
     if [ -f "${candidate}" ]; then
-      echo "${candidate}"
-      return
+      if pbf_is_valid "${candidate}"; then
+        echo "${candidate}"
+        return
+      fi
+      log "Argentina PBF corrupto, eliminando: ${candidate}"
+      rm -f "${candidate}"
     fi
   done
 
@@ -77,15 +116,20 @@ resolve_argentina_pbf() {
 }
 
 prepare_pbf() {
-  if [ -f "${PBF_FILE}" ]; then
+  invalidate_pbf_cache "${PBF_FILE}" || true
+
+  if [ -f "${PBF_FILE}" ] && pbf_is_valid "${PBF_FILE}"; then
     log "PBF existente en volumen: ${PBF_FILE}"
     return
   fi
 
   if [ -n "${PBF_PATH:-}" ] && [ -f "${PBF_PATH}" ]; then
-    log "Usando PBF local: ${PBF_PATH}"
-    cp -f "${PBF_PATH}" "${PBF_FILE}"
-    return
+    if pbf_is_valid "${PBF_PATH}"; then
+      log "Usando PBF local: ${PBF_PATH}"
+      cp -f "${PBF_PATH}" "${PBF_FILE}"
+      return
+    fi
+    log "PBF_PATH inválido, ignorando: ${PBF_PATH}"
   fi
 
   if [ -n "${PBF_URL:-}" ]; then
@@ -128,14 +172,22 @@ if [ "${FORCE_REBUILD:-false}" = "true" ]; then
 fi
 
 if [ "${FORCE_REEXTRACT:-false}" = "true" ]; then
-  if [ -f "${REEXTRACT_MARKER}" ] && [ -f "${PBF_FILE}" ]; then
-    log "FORCE_REEXTRACT ya aplicado (${PBF_FILE} existe). Desactivá FORCE_REEXTRACT en Railway."
+  if osrm_ready; then
+    log "FORCE_REEXTRACT: grafo ya listo. Desactivá FORCE_REEXTRACT en Railway."
   else
-    log "FORCE_REEXTRACT: eliminando PBF en caché (una sola vez)..."
-    rm -f "${PBF_FILE}" "${DATA_DIR}/argentina-latest.osm.pbf" "${DATA_DIR}/argentina.osm.pbf"
-    rm -f "${REEXTRACT_MARKER}"
+    log "FORCE_REEXTRACT: limpiando PBF en caché..."
+    purge_pbf_cache
   fi
 fi
+
+# Validar PBF/Argentina aunque FORCE_REEXTRACT esté en false
+invalidate_pbf_cache "${PBF_FILE}" || true
+for candidate in \
+  "${DATA_DIR}/argentina-260618.osm.pbf" \
+  "${DATA_DIR}/argentina-latest.osm.pbf" \
+  "${DATA_DIR}/argentina.osm.pbf"; do
+  invalidate_pbf_cache "${candidate}" || true
+done
 
 if ! osrm_ready; then
   prepare_pbf
@@ -145,9 +197,20 @@ if ! osrm_ready; then
     exit 1
   fi
 
+  if ! pbf_is_valid "${PBF_FILE}"; then
+    log "ERROR: ${PBF_FILE} sigue inválido tras prepare_pbf"
+    rm -f "${PBF_FILE}"
+    exit 1
+  fi
+
   log "Procesando grafo OSRM (puede tardar 10-30 min; el healthcheck debe esperar)..."
   log "extract..."
-  osrm-extract -p /opt/car.lua "${PBF_FILE}"
+  if ! osrm-extract -p /opt/car.lua "${PBF_FILE}"; then
+    log "ERROR: osrm-extract falló. Eliminando PBF posiblemente corrupto."
+    rm -f "${PBF_FILE}" "${DATA_DIR}/argentina-latest.osm.pbf" "${DATA_DIR}/argentina.osm.pbf"
+    rm -f "${REEXTRACT_MARKER}"
+    exit 1
+  fi
   log "partition..."
   osrm-partition "${OSRM_BASE}"
   log "customize..."
