@@ -1,63 +1,49 @@
 # profesional-osrm
 
-Servidor de rutas **OSRM** para ProfesionalApp (Salta, Argentina).  
-Despliegue en [Railway](https://railway.app) — **sin pasos locales**.
+Servidor de rutas **OSRM** para ProfesionalApp (Salta, Argentina).
 
-## Railway (5 minutos)
+## Railway — configuración estable
 
-1. Creá un repo vacío en GitHub: `profesional-osrm`
-2. Subí este código (`git push`)
-3. En Railway → **New Project** → **Deploy from GitHub** → elegí `profesional-osrm`
-4. **Volumes** → montá `/data` (2 GB+)
-5. **Networking** → **Generate Domain**
-6. **Settings → Deploy → Healthcheck timeout: `2400`** (40 min en el primer arranque o con `FORCE_REBUILD=true`)
-7. Esperá el primer deploy (10–30 min). Revisá logs hasta `Servidor listo en puerto`
+| Setting | Valor |
+|---------|-------|
+| Volume | `/data` (5 GB) |
+| Scale → Memory | **4 GB** (build) / puede bajar a 2 GB cuando el grafo ya existe |
+| Scale → CPU | **2 vCPU** |
+| Deploy → Healthcheck timeout | **3600 s** (primer build) |
+| Deploy → Serverless | Activar cuando esté en verde |
 
-No hace falta configurar variables: el Dockerfile ya trae los defaults.
+### Variables (arranque normal)
 
-## Healthcheck (importante)
-
-Railway solo marca el deploy como **Active** cuando OSRM responde en la ruta de prueba.  
-Mientras **construye el grafo**, el servidor aún no escucha → el healthcheck falla si el timeout es corto.
-
-| Situación | Healthcheck timeout |
-|-----------|---------------------|
-| Grafo ya en `/data` (arranque normal) | 300 s alcanza |
-| Primer deploy o `FORCE_REBUILD=true` | **2400 s** (40 min) |
-
-Path (no cambiar):
-
-```http
-/route/v1/driving/-65.42,-24.78;-65.41,-24.79?overview=false
+```env
+FORCE_REBUILD=false
+FORCE_REEXTRACT=false
 ```
 
-Tras un rebuild exitoso, poné `FORCE_REBUILD=false` y podés bajar el timeout a 300 s.
+### Reconstruir grafo (una sola vez)
+
+```env
+FORCE_REBUILD=true
+FORCE_REEXTRACT=true
+```
+
+Tras deploy exitoso → volver ambas a `false`.
+
+### Evitar OOM en osmium (recomendado)
+
+No descargues Argentina en cada deploy. Usá **PBF de Salta ya extraído**:
+
+```env
+PBF_URL=https://TU_PROYECTO.supabase.co/storage/v1/object/public/osm-data/salta.osm.pbf
+```
+
+Generá `salta.osm.pbf` localmente con `infra/geospatial/scripts/prepare-osm-data.ps1` y subilo a Supabase (`upload-pbf-supabase.mjs`).
 
 ## Probar
 
 ```http
-GET https://TU-URL.up.railway.app/route/v1/driving/-65.42,-24.78;-65.41,-24.79?steps=true
+GET https://profesional-osrm-production.up.railway.app/route/v1/driving/-65.42,-24.78;-65.41,-24.79?overview=false
 ```
 
-## driver-app
+## Crash-loop
 
-```env
-EXPO_PUBLIC_OSRM_URL=https://TU-URL.up.railway.app
-```
-
-## Requisitos
-
-| Recurso | Valor |
-|---------|-------|
-| RAM     | 4–8 GB (primer arranque) |
-| Volumen | `/data` obligatorio |
-
-## Variables opcionales
-
-| Variable | Default | Descripción |
-|----------|---------|-------------|
-| `SALTA_BBOX` | `-68.75,-26.62,-62.00,-21.78` | Bbox provincia Salta |
-| `SALTA_EXTRACT` | `true` | `false` = Argentina completa |
-| `FORCE_REBUILD` | `false` | `true` = borra grafo y reprocessa (usar con timeout 2400 s) |
-| `FORCE_REEXTRACT` | `false` | `true` = borra PBF en caché |
-| `PBF_SOURCE_URL` | BBBike Argentina | Mirror alternativo al PBF |
+Si `FORCE_REBUILD`/`FORCE_REEXTRACT` quedan en `true` y el build falla, el entrypoint usa un **lock** en `/data/.force-ops-in-progress` para no borrar el caché en cada reinicio. Borrá ese archivo solo si querés forzar un reset manual.
