@@ -287,5 +287,22 @@ else
   fi
 fi
 
-log "Servidor listo en puerto ${PORT} (threads=${OSRM_THREADS})"
+log "Servidor listo (threads=${OSRM_THREADS})"
+
+if [ "${CACHE_ENABLED:-true}" = "true" ]; then
+  BACKEND_PORT="${OSRM_BACKEND_PORT:-5001}"
+  mkdir -p "${DATA_DIR}/nginx-cache"
+  log "OSRM interno en 127.0.0.1:${BACKEND_PORT}; nginx con caché en puerto ${PORT}"
+  osrm-routed --algorithm mld --ip 127.0.0.1 --port "${BACKEND_PORT}" --threads "${OSRM_THREADS}" "${OSRM_BASE}" &
+
+  NGINX_PORT="${PORT}" \
+  BACKEND_PORT="${BACKEND_PORT}" \
+  NGINX_MAIN_CONF=/etc/nginx/nginx.conf \
+  NGINX_SITE_TEMPLATE=/etc/nginx/templates/site.conf.template \
+  CACHE_DIR="${DATA_DIR}/nginx-cache" \
+  HEALTH_URL="http://127.0.0.1:${BACKEND_PORT}/route/v1/driving/-65.42,-24.78;-65.41,-24.79?overview=false" \
+  exec /usr/local/bin/start-nginx-cache.sh osrm
+fi
+
+log "Sin caché HTTP; OSRM en puerto ${PORT}"
 exec osrm-routed --algorithm mld --port "${PORT}" --threads "${OSRM_THREADS}" "${OSRM_BASE}"
